@@ -3,7 +3,7 @@ import { GeoPosition, LatLng, NarrationCard, Poi } from '../types';
 import { fetchNearbyPois } from './overpass';
 import { fetchWikipediaPois } from './wikipediaGeo';
 import { fetchSummary } from './wiki';
-import { buildScript, setMuted, speak } from './narration';
+import { buildScript, isSpeaking, prepareVoice, setMuted, speak } from './narration';
 import {
   getCachedPoi,
   initDb,
@@ -14,21 +14,38 @@ import {
 import { haversine } from './geo';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, Settings } from './settings';
 
-const FETCH_RADIUS = 700;
-const MAX_FETCH_RADIUS = 2500;
-const MIN_MOVE_FETCH = 200;
-const MIN_FETCH_INTERVAL = 25000;
-const MAX_TRAIL = 300;
-const MAX_POIS = 80;
+// A drive needs a longer view down the road than a stroll: at 100 km/h the car
+// covers 1 km in 36 s, so places are fetched a kilometre out and kept until the
+// driver is well past them.
+const FETCH_RADIUS = 1000;
+const MAX_FETCH_RADIUS = 3000;
+const MIN_MOVE_FETCH = 250;
+const MIN_FETCH_INTERVAL = 30000;
+const MAX_TRAIL = 400;
+const MAX_POIS = 120;
 
-// Narration should lead the landmark, not trail it. At speed the lead distance
-// grows so the story starts the same number of seconds before the pass, which
-// is what makes it work on a motorway as well as in town.
-const CUE_BASE_METERS = 260;
-const CUE_SECONDS = 22;
-const MAX_CUE_METERS = 1200;
-// Anything this far off the nose is considered already behind us.
-const BEHIND_DEGREES = 100;
+// Narration should lead the landmark, not trail it. The lead is roughly the
+// length of the spoken story (~18 s), so the facts finish just as the driver
+// reaches the place, and it grows with speed so this holds on a motorway too.
+const CUE_BASE_METERS = 300;
+const CUE_SECONDS = 18;
+const MAX_CUE_METERS = 1600;
+
+// A landmark this far off the line of travel is on another street, or in a town
+// the motorway merely passes, so it is not something to narrate.
+const LATERAL_BASE_METERS = 180;
+const LATERAL_MAX_METERS = 600;
+// Already-passed places are dropped, with a small grace for GPS lag.
+const BEHIND_TOLERANCE_METERS = 40;
+
+// Fixes worse than this say too little about which side of the road you are on
+// to time a story; ones worse still are not worth drawing either.
+const NARRATION_MAX_ACCURACY = 300;
+const DROP_ACCURACY = 500;
+// A fix implying faster than this is a GPS spike, not a drive.
+const MAX_JUMP_SPEED = 75;
+// Heading is only trustworthy once actually rolling.
+const MOVING_FOR_HEADING = 3;
 
 export interface TourState {
   position: GeoPosition | null;
@@ -93,6 +110,8 @@ export function ensureEngineReady(): Promise<Settings> {
       const loaded = await loadSettings();
       settings = loaded;
       setMuted(loaded.muted);
+      // Pick the clearest installed English voice before the first story.
+      void prepareVoice();
       return settings;
     })();
   }
@@ -108,12 +127,17 @@ export function updateSettings(patch: Partial<Settings>): Settings {
 
 const inFlight = new Set<string>();
 let lastCard: NarrationCard | null = null;
-// Narration now starts on every fix that brings a place into cue range, so a
-// short cooldown keeps one story from being cut off by the next landmark.
-const NARRATE_COOLDOWN_MS = 18000;
+// Stories no longer collide: a new one only starts once the previous has
+// finished speaking. This short gap is just a backstop after a manual stop.
+const NARRATE_MIN_GAP_MS = 2500;
 let lastNarrateAt = 0;
 
-export async function narratePoi(poi: Poi): Promise<void> {
+/**
+ * Narrate a place. `lead` is how many metres ahead it is when the engine chose
+ * it automatically, which lets the script say "700 metres ahead"; manual taps
+ * pass nothing.
+ */
+export async function narratePoi(poi: Poi, lead?: number | null): Promise<void> {
   if (inFlight.has(poi.id)) return;
   inFlight.add(poi.id);
   try {
@@ -142,11 +166,7 @@ export async function narratePoi(poi: Poi): Promise<void> {
       }
     }
 
-    const from = state.position;
-    const isHere = from
-      ? haversine(from.lat, from.lng, poi.lat, poi.lng) < 150
-      : true;
-    const text = buildScript(title, poi.kind, extract, isHere);
+    const text = buildScript(title, poi.kind, extract, lead ?? null);
     const card: NarrationCard = {
       poiId: poi.id,
       title,
@@ -180,11 +200,16 @@ function cueDistance(speed: number | null): number {
   return Math.min(MAX_CUE_METERS, Math.max(CUE_BASE_METERS, lead));
 }
 
+/** How far either side of the road a place may sit and still be on the route. */
+function lateralLimit(cue: number): number {
+  return Math.min(LATERAL_MAX_METERS, Math.max(LATERAL_BASE_METERS, cue * 0.3));
+}
+
 /** Keep places far enough ahead in the list when the cue window is wide. */
 function fetchRadius(speed: number | null): number {
   return Math.min(
     MAX_FETCH_RADIUS,
-    Math.max(FETCH_RADIUS, Math.round(cueDistance(speed) + 300)),
+    Math.max(FETCH_RADIUS, Math.round(cueDistance(speed) * 1.2)),
   );
 }
 
@@ -212,7 +237,11 @@ async function autoNarrate(position: GeoPosition, list: Poi[]): Promise<void> {
   // A fix publishes twice (Wikipedia, then OSM). The second pass must not skip
   // past the story already in `inFlight` and start a competing one.
   if (autoNarrateBusy || inFlight.size > 0) return;
-  if (Date.now() - lastNarrateAt < NARRATE_COOLDOWN_MS) return;
+  // Never talk over the story already playing, and give the speaker a beat
+  // after it ends instead of chasing every fix.
+  if (isSpeaking() || Date.now() - lastNarrateAt < NARRATE_MIN_GAP_MS) return;
+  // A coarse fix cannot tell which side of the road a place is on.
+  if (position.accuracy !== null && position.accuracy > NARRATION_MAX_ACCURACY) return;
   autoNarrateBusy = true;
   try {
     await narrateBestCandidate(position, list);
@@ -226,40 +255,55 @@ async function narrateBestCandidate(
   list: Poi[],
 ): Promise<void> {
   const { lat, lng } = position;
-  const cue = cueDistance(position.speed);
-  // Heading is only trustworthy while actually moving; at a red light it can
-  // be stale, so the forward filter is applied on the move only.
-  const moving = (position.speed ?? 0) > 1.5;
+  const slack = Math.min(position.accuracy ?? 0, 100);
+  const cue = cueDistance(position.speed) + slack;
+  const lateral = lateralLimit(cue) + slack;
+  // Heading is only trustworthy while actually rolling; at a red light it can
+  // be stale, so the directional test only applies on the move.
+  const moving = (position.speed ?? 0) > MOVING_FOR_HEADING;
   const nose = position.heading;
 
   const candidates = list
-    .map((poi) => ({ poi, distance: haversine(lat, lng, poi.lat, poi.lng) }))
+    .map((poi) => {
+      const distance = haversine(lat, lng, poi.lat, poi.lng);
+      let along = distance;
+      let off = 0;
+      if (moving && nose !== null) {
+        // Split the distance into how far ahead along the line of travel the
+        // place is, and how far off that line it sits. This ignores a place on
+        // a parallel street and rejects one already behind the car, whatever
+        // the compass says.
+        const gap = (angleGap(
+          bearing(lat, lng, poi.lat, poi.lng),
+          nose,
+        ) *
+          Math.PI) /
+          180;
+        along = distance * Math.cos(gap);
+        off = Math.abs(distance * Math.sin(gap));
+      }
+      return { poi, distance, along, off };
+    })
     .filter((item) => item.distance <= cue)
     .filter((item) => item.poi.interest >= settings.minInterest)
-    .filter((item) => {
-      // A place the nose points away from is one we have already passed.
-      if (!moving || nose === null) return true;
-      const offNose = angleGap(
-        bearing(lat, lng, item.poi.lat, item.poi.lng),
-        nose,
-      );
-      return offNose <= BEHIND_DEGREES;
-    })
-    // Nearest first: the cue window is wide at speed, so announce the place we
-    // reach soonest rather than the most interesting one further up the road.
-    .sort((a, b) => a.distance - b.distance || b.poi.interest - a.poi.interest);
+    .filter((item) => item.along >= -BEHIND_TOLERANCE_METERS)
+    .filter((item) => item.off <= lateral)
+    // Soonest reached first: the cue window is wide at speed, so announce the
+    // place the car gets to next rather than the best one further up the road.
+    .sort((a, b) => a.along - b.along || b.poi.interest - a.poi.interest);
 
   for (const candidate of candidates) {
     const skip = await wasNarratedRecently(candidate.poi.id, lat, lng).catch(
       () => false,
     );
     if (skip) continue;
-    void narratePoi(candidate.poi);
+    void narratePoi(candidate.poi, Math.max(0, candidate.along));
     break;
   }
 }
 
 let lastFetch: { lat: number; lng: number; at: number } | null = null;
+let lastFix: { lat: number; lng: number; at: number } | null = null;
 
 /** Overpass can hang; cap how long its pass stays open. */
 const FETCH_DEADLINE = 12000;
@@ -288,7 +332,7 @@ function publishPois(lat: number, lng: number, incoming: Poi[]): void {
     if (!existing || poi.interest > existing.interest) unique.set(key, poi);
   }
 
-  const keepRadius = fetchRadius(state.position?.speed ?? null) * 1.4;
+  const keepRadius = fetchRadius(state.position?.speed ?? null) * 1.5;
   const list = Array.from(unique.values())
     .filter((poi) => haversine(lat, lng, poi.lat, poi.lng) <= keepRadius)
     .sort(
@@ -342,6 +386,19 @@ export async function ingestSample(coords: Location.LocationObjectCoords): Promi
       typeof coords.speed === 'number' && coords.speed >= 0 ? coords.speed : null;
     const accuracy = typeof coords.accuracy === 'number' ? coords.accuracy : null;
 
+    // A fix this coarse is a cell-tower estimate, not a road position.
+    if (accuracy !== null && accuracy > DROP_ACCURACY) return;
+
+    const now = Date.now();
+    // Reject impossible jumps, which GPS hands out when it re-acquires in a
+    // tunnel or between tall buildings; one spike would skip a whole story.
+    if (lastFix) {
+      const seconds = Math.max(1, (now - lastFix.at) / 1000);
+      const jump = haversine(lastFix.lat, lastFix.lng, coords.latitude, coords.longitude);
+      if (jump > MAX_JUMP_SPEED * seconds) return;
+    }
+    lastFix = { lat: coords.latitude, lng: coords.longitude, at: now };
+
     const next: GeoPosition = {
       lat: coords.latitude,
       lng: coords.longitude,
@@ -361,7 +418,6 @@ export async function ingestSample(coords: Location.LocationObjectCoords): Promi
     // is the moment that actually tells us the driver has moved closer.
     void autoNarrate(next, state.pois);
 
-    const now = Date.now();
     const moved = lastFetch
       ? haversine(lastFetch.lat, lastFetch.lng, next.lat, next.lng)
       : Infinity;

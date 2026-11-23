@@ -13,7 +13,7 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)
 ![Expo SDK](https://img.shields.io/badge/Expo_SDK-58-000020?logo=expo&logoColor=white)
 ![React Native](https://img.shields.io/badge/React_Native-0.88-61DAFB?logo=react&logoColor=black)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.1-blue)
 ![Data](https://img.shields.io/badge/data-OSM_%2B_Wikipedia-0aa2c0)
 
 ---
@@ -69,7 +69,7 @@ GPS fix ──► tour engine ──► POI fetch (Wikipedia + Overpass) ──�
 ### 1. Location, including with the screen locked
 
 `src/lib/backgroundLocation.ts` prefers OS-driven background updates
-(`expo-task-manager` + `expo-location`, 20 m / 8 s, automotive navigation accuracy) and registers
+(`expo-task-manager` + `expo-location`, 50 m / 10 s, automotive navigation accuracy) and registers
 a foreground service with a persistent notification. If the user has not granted "all the time"
 access, it falls back to a foreground watcher and says so in the UI. If access is granted later in
 system settings, returning to the app upgrades the watcher without a restart.
@@ -77,6 +77,16 @@ system settings, returning to the app upgrades the watcher without a restart.
 `src/lib/tourEngine.ts` is a module-scope singleton, deliberately outside React: the background
 task and the screen both feed it samples, and both listen to the same state. That is what lets
 narration continue while no UI is mounted.
+
+A 50 m interval is deliberate. The cue window opens 300 m or more before a landmark, so 50 m is
+plenty precise for timing a story, while waking the GPS five times less often than a 20 m
+interval keeps a long drive from draining the battery.
+
+Bad fixes are rejected before they reach the tour: anything with an accuracy worse than 500 m is
+dropped, and a jump that implies more than 75 m/s (270 km/h) since the last fix is treated as a
+GPS re-acquisition spike. A single such spike would otherwise skip a whole landmark and poison
+the trail. Narration additionally ignores fixes coarser than 300 m, since they cannot tell which
+side of the road a place is on.
 
 ### 2. Finding landmarks
 
@@ -108,27 +118,37 @@ lighthouse 91, monument 88, museum 84, bridge 84, cathedral 82, park 62, library
 `narrateBestCandidate()` runs on **every GPS fix**, not only when a fetch returns, and picks the
 nearest qualifying landmark inside the cue window:
 
-- **Cue distance** = `260 m + 22 s × speed`, clamped to 260–1200 m. At a walking pace you hear
-  about a place a few hundred metres out; at motorway speed the lead grows so the story still
-  finishes before you pass it.
-- **Forward filter.** The bearing from you to each candidate is compared with your GPS heading; a
-  place more than 100° off your nose is treated as behind you and skipped. The filter only applies
-  above 1.5 m/s, because heading is stale when you are stopped at a light.
-- **Nearest first**, then interest, because at speed the cue window is wide.
-- **Cooldown** of 18 s between stories so one landmark cannot interrupt another.
-- **Phrasing** adapts: "Coming up on X." when you are approaching, "You're passing X." when you
-  are already within 150 m.
+- **Cue distance** = `300 m + 18 s × speed`, clamped to 300–1600 m. The lead is roughly the length
+  of the spoken story, so the facts finish just as you reach the place. At a standstill the cue is
+  300 m; at 100 km/h it is 800 m.
+- **Along-track test, not a compass cone.** The bearing to each candidate is split against your GPS
+  heading into how far *ahead* it is along your line of travel and how far *off* that line it sits.
+  A place may be at most `clamp(cue × 0.3, 180, 600) m` off the line (240 m at 100 km/h) and must
+  still be ahead, give or take 40 m of GPS lag. This drops places on a parallel street and towns a
+  motorway merely passes, and it rejects anything already behind you regardless of compass error.
+  The test only applies above 3 m/s, because heading is stale when you are stopped at a light.
+- **Soonest reached first**, then interest, because at speed the cue window is wide.
+- **One story at a time.** Nothing new starts while the speaker is talking, so a landmark is never
+  cut off mid-sentence; the next story begins on the first fix after the previous one finishes
+  (2.5 s backstop).
+- **Phrasing adapts**: `Dordrecht Museum, 700 metres ahead.` on approach, `You're passing X.`
+  within 60 m, and plain `Coming up on X.` for a place you tapped yourself.
 
-`src/lib/narration.ts` builds the line from the Wikipedia intro extract, trimmed to whole sentences
-(≤340 characters), and speaks it with `expo-speech` at rate 0.95. The speech queue is capped at two
-utterances: if a backlog forms, it drops the queue and speaks the place you are at now.
+`src/lib/narration.ts` picks the clearest installed English voice once per run (enhanced or Google
+network voices score highest), speaks at rate 0.92, pitch 1.0 and full volume, strips citations
+and bracketed asides from the extract, and trims it to whole sentences (≤300 characters, about
+18 s of speech) so the important first lines are never the part that gets lost. The speech queue
+holds one utterance: a new story replaces an old one rather than stacking behind it.
 
-| Speed | Cue distance | Fetch radius |
-| --- | --- | --- |
-| 0 km/h | 260 m | 700 m |
-| 50 km/h | 566 m | 866 m |
-| 100 km/h | 871 m | 1171 m |
-| 130 km/h | 1054 m | 1354 m |
+| Speed | Cue distance | Lateral limit | Fetch radius |
+| --- | --- | --- | --- |
+| 0 km/h | 300 m | 180 m | 1000 m |
+| 50 km/h | 550 m | 180 m | 1000 m |
+| 100 km/h | 800 m | 240 m | 1000 m |
+| 130 km/h | 950 m | 285 m | 1140 m |
+
+POIs are re-fetched every 250 m of travel or 30 s, whichever comes first, with a 1 km minimum
+radius and a list capped at 120 places.
 
 ### 5. Caching and memory
 
@@ -208,8 +228,9 @@ there), or `npx expo run:android` for a development build.
 
 Settings are exposed in the app (sound, auto-narration, follow, minimum interest). The tuning
 constants for the approach logic live at the top of `src/lib/tourEngine.ts`:
-`CUE_BASE_METERS`, `CUE_SECONDS`, `MAX_CUE_METERS`, `BEHIND_DEGREES`, `NARRATE_COOLDOWN_MS`, and
-the fetch throttles.
+`CUE_BASE_METERS`, `CUE_SECONDS`, `MAX_CUE_METERS`, `LATERAL_BASE_METERS`, `LATERAL_MAX_METERS`,
+`BEHIND_TOLERANCE_METERS`, `NARRATION_MAX_ACCURACY`, `MAX_JUMP_SPEED`, and the fetch throttles
+(`FETCH_RADIUS`, `MIN_MOVE_FETCH`, `MIN_FETCH_INTERVAL`).
 
 ## Limitations
 

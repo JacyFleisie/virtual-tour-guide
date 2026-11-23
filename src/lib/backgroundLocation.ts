@@ -29,10 +29,13 @@ if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(LOCATION_TASK)) {
   );
 }
 
+// 50 m between fixes matches the narration window (a cue opens 300 m+ before a
+// place), so it is precise enough for driving while waking the GPS far less
+// than a 20 m interval, which saves battery on a long trip.
 export const TASK_OPTIONS: Location.LocationTaskOptions = {
   accuracy: Location.Accuracy.High,
-  distanceInterval: 20,
-  timeInterval: 8000,
+  distanceInterval: 50,
+  timeInterval: 10000,
   activityType: Location.ActivityType.AutomotiveNavigation,
   pausesUpdatesAutomatically: false,
   showsBackgroundLocationIndicator: true,
@@ -46,8 +49,8 @@ export const TASK_OPTIONS: Location.LocationTaskOptions = {
 
 const FOREGROUND_OPTIONS: Location.LocationOptions = {
   accuracy: Location.Accuracy.High,
-  distanceInterval: 20,
-  timeInterval: 8000,
+  distanceInterval: 50,
+  timeInterval: 10000,
   mayShowUserSettingsDialog: true,
 };
 

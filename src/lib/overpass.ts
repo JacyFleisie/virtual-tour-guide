@@ -34,7 +34,7 @@ function buildQuery(lat: number, lng: number, radius: number): string {
   nwr["leisure"~"^(park|nature_reserve|garden)$"]${around};
   nwr["amenity"~"^(place_of_worship|theatre|library|townhall|marketplace)$"]${around};
 );
-out center tags 80;`;
+out center tags 120;`;
 }
 
 function elementToPoi(el: OverpassElement, originLat: number, originLng: number): Poi | null {
