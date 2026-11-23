@@ -13,7 +13,7 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)
 ![Expo SDK](https://img.shields.io/badge/Expo_SDK-58-000020?logo=expo&logoColor=white)
 ![React Native](https://img.shields.io/badge/React_Native-0.88-61DAFB?logo=react&logoColor=black)
-![Version](https://img.shields.io/badge/version-1.0.1-blue)
+![Version](https://img.shields.io/badge/version-1.0.2-blue)
 ![Data](https://img.shields.io/badge/data-OSM_%2B_Wikipedia-0aa2c0)
 
 ---

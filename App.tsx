@@ -267,7 +267,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.25)',
   },
-  pillActive: { borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.18)' },
+  pillActive: { borderColor: '#38bdf8', backgroundColor: '#0b1220' },
   pillText: { color: '#e2e8f0', fontSize: 12, fontWeight: '600' },
   notice: {
     alignSelf: 'flex-start',
@@ -367,14 +367,14 @@ const styles = StyleSheet.create({
   },
   controlActive: {
     borderColor: '#38bdf8',
-    backgroundColor: 'rgba(56,189,248,0.18)',
+    backgroundColor: '#11243a',
   },
   controlPrimary: {
     borderColor: '#f59e0b',
-    backgroundColor: 'rgba(245,158,11,0.2)',
+    backgroundColor: '#33220a',
   },
   controlIcon: { fontSize: 20 },
-  controlLabel: { color: '#e2e8f0', fontSize: 12, fontWeight: '600' },
+  controlLabel: { color: '#f1f5f9', fontSize: 12, fontWeight: '600' },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(2,6,23,0.85)',
