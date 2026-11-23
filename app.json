@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Virtual Tour Guide",
+    "slug": "virtual-tour-guide",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "virtualtourguide",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.freebuff.virtualtourguide",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Virtual Tour Guide uses your location to find landmarks near you as you drive.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Virtual Tour Guide keeps tracking your route in the background, so it can narrate landmarks while your screen is locked or the app is in the background."
+      }
+    },
+    "android": {
+      "package": "com.freebuff.virtualtourguide",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#0b1220",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Virtual Tour Guide uses your location to find landmarks near you as you drive.",
+          "locationAlwaysAndWhenInUsePermission": "Virtual Tour Guide keeps tracking your route in the background, so it can narrate landmarks while your screen is locked or the app is in the background.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ]
+  }
+}
