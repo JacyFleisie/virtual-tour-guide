@@ -18,6 +18,29 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/01-welcome.jpg" width="240" alt="First-launch welcome screen" /><br />
+      <sub><b>First launch</b> — safety note on screen while driving and what the tour will do</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/02-live-tour.jpg" width="240" alt="Live tour map with landmarks and narration card" /><br />
+      <sub><b>Live tour</b> — position, speed and landmark count up top, pins on the map, the story being read out, nearby places and the four controls</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/03-landmark-narration.jpg" width="240" alt="Tapped landmark pin with narration card" /><br />
+      <sub><b>Tap a landmark</b> — map zooms to the pin, opens its popup and reads the story</sub>
+    </td>
+  </tr>
+</table>
+
+Captured from the release build on Android 14 with a simulated drive through central Cape Town.
+
+---
+
 ## Download and install
 
 1. Open the download link above on your Android phone (or transfer the APK to it).
