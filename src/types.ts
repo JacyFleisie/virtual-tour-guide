@@ -7,6 +7,7 @@ export interface Poi {
   lng: number;
   interest: number;
   wikipedia?: string;
+  image?: string | null;
 }
 
 export interface PoiWithDistance extends Poi {

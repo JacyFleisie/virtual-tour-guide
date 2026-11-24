@@ -11,6 +11,7 @@ import {
   ingestSample,
   narratePoi,
   repeatLast as engineRepeatLast,
+  skipCurrent as engineSkipCurrent,
   subscribeTour,
   tellMeNearest as engineTellMeNearest,
   TourState,
@@ -166,6 +167,11 @@ export function useTourGuide() {
     if (!result.ok) flash(result.message);
   }, [flash]);
 
+  const skipStory = useCallback(() => {
+    const result = engineSkipCurrent();
+    if (!result.ok) flash(result.message);
+  }, [flash]);
+
   const toggleMute = useCallback(() => {
     persist({ muted: !getSettings().muted });
   }, [persist]);
@@ -206,6 +212,7 @@ export function useTourGuide() {
     narrate,
     tellMeNearest,
     repeatLast,
+    skipStory,
     toggleMute,
     toggleAuto,
     toggleFollow,

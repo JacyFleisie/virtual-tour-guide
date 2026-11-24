@@ -46,3 +46,9 @@ yarn-error.*
 # local tooling state
 .freebuff/
 .claude/
+
+# local Kotlin module build output
+modules/*/android/build/
+
+# local build logs
+gradle-build.log

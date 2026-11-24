@@ -34,6 +34,7 @@ export default function App() {
     narrate,
     tellMeNearest,
     repeatLast,
+    skipStory,
     toggleMute,
     toggleAuto,
     toggleFollow,
@@ -147,8 +148,9 @@ export default function App() {
         ) : (
           <View style={styles.hintCard}>
             <Text style={styles.hintText}>
-              Live tour ready. Start driving and I&apos;ll tell you about the landmarks
-              you pass.
+              {settings.autoNarrate
+                ? 'Live tour ready. Start driving and I\u2019ll tell you about the landmarks you pass.'
+                : 'Tour paused. Your position is still tracked — tap Resume to hear landmarks again, or Tell me for one now.'}
             </Text>
           </View>
         )}
@@ -188,12 +190,23 @@ export default function App() {
           </Pressable>
 
           <Pressable
-            style={[styles.control, settings.autoNarrate && styles.controlActive]}
+            style={[styles.control, !settings.autoNarrate && styles.controlPaused]}
             onPress={toggleAuto}
           >
-            <Text style={styles.controlIcon}>🎙️</Text>
-            <Text style={styles.controlLabel}>
-              {settings.autoNarrate ? 'Auto on' : 'Auto off'}
+            <Text style={styles.controlIcon}>{settings.autoNarrate ? '⏸️' : '▶️'}</Text>
+            <Text style={styles.controlLabel} numberOfLines={1}>
+              {settings.autoNarrate ? 'Pause' : 'Resume'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.control, !nowPlaying && styles.controlDisabled]}
+            onPress={skipStory}
+            disabled={!nowPlaying}
+          >
+            <Text style={styles.controlIcon}>⏭️</Text>
+            <Text style={styles.controlLabel} numberOfLines={1}>
+              Skip
             </Text>
           </Pressable>
 
@@ -373,6 +386,11 @@ const styles = StyleSheet.create({
     borderColor: '#f59e0b',
     backgroundColor: '#33220a',
   },
+  controlPaused: {
+    borderColor: '#f59e0b',
+    backgroundColor: '#33220a',
+  },
+  controlDisabled: { opacity: 0.45 },
   controlIcon: { fontSize: 20 },
   controlLabel: { color: '#f1f5f9', fontSize: 12, fontWeight: '600' },
   modalBackdrop: {

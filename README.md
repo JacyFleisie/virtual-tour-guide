@@ -13,7 +13,7 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)
 ![Expo SDK](https://img.shields.io/badge/Expo_SDK-58-000020?logo=expo&logoColor=white)
 ![React Native](https://img.shields.io/badge/React_Native-0.88-61DAFB?logo=react&logoColor=black)
-![Version](https://img.shields.io/badge/version-1.0.2-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![Data](https://img.shields.io/badge/data-OSM_%2B_Wikipedia-0aa2c0)
 
 ---
@@ -27,12 +27,12 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
       <sub><b>First launch</b> — safety note on screen while driving and what the tour will do</sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/screenshots/02-live-tour.jpg" width="240" alt="Live tour map with landmarks and narration card" /><br />
-      <sub><b>Live tour</b> — position, speed and landmark count up top, pins on the map, the story being read out, nearby places and the four controls</sub>
+      <img src="docs/screenshots/02-live-tour.jpg" width="240" alt="Live tour map with photo pins, narration card and the five controls" /><br />
+      <sub><b>Live tour</b> — status pills, photo pins and numbered clusters, the story being read out, nearby places, and the five controls (Sound, Pause, Skip, Tell me, Repeat)</sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/screenshots/03-landmark-narration.jpg" width="240" alt="Tapped landmark pin with narration card" /><br />
-      <sub><b>Tap a landmark</b> — map zooms to the pin, opens its popup and reads the story</sub>
+      <img src="docs/screenshots/03-landmark-narration.jpg" width="240" alt="Tapped landmark pin with photo popup and narration card" /><br />
+      <sub><b>Tap a landmark</b> — the pin opens its photo card on the map and the story is read out</sub>
     </td>
   </tr>
 </table>
@@ -63,14 +63,20 @@ tiles, landmark data and Wikipedia summaries; everything already heard is cached
 
 - **Narrates on approach.** A speed-scaled cue window starts a story roughly 20 seconds before you
   reach a landmark, and places off your nose (already passed) are skipped.
-- **Live map.** Leaflet in a WebView over OpenStreetMap tiles, with your pulsing position dot, the
-  breadcrumb trail of where you have driven, and tappable pins for every landmark found.
+- **Live map.** Leaflet in a WebView over OpenStreetMap tiles, with your position beacon, the
+  breadcrumb trail of where you have driven, and tappable pins for every landmark found. Each pin
+  is a photo medallion of the place itself when Wikipedia has a picture, and an emoji medallion on
+  a colour-coded pointer when it does not; tapping one opens a card with the photo, name and kind.
 - **Hands-free by default.** Auto narration uses the phone's text-to-speech; nothing needs to be
   read or tapped.
 - **Background tracking.** An Expo background-location task plus an Android foreground service
   keeps listening with the screen off or the app closed — narration still plays.
 - **Works on tap too.** "Tell me" narrates the nearest landmark, "Repeat" replays the last story,
-  and tapping any pin or nearby chip plays that place.
+  "Skip" cuts the current story short, and tapping any pin or nearby chip plays that place.
+- **Pause keeps tracking.** "Pause" stops automatic narration and the story playing, but location
+  tracking, the map and the landmark list keep running; "Resume" turns the tour back on.
+- **Music steps aside.** A story takes Android audio focus, so Spotify, YouTube Music or any other
+  player pauses while the narration speaks and is free to resume when it ends.
 - **Remembers what you have heard.** A story is not repeated for 60 minutes or within 800 m of
   where you heard it, so a round trip does not loop the same facts.
 - **Offline-tolerant for text.** Summaries and images already fetched are cached in SQLite and
@@ -185,13 +191,14 @@ flag live in AsyncStorage (`src/lib/settings.ts`). Everything is on-device; noth
 
 | Element | Behaviour |
 | --- | --- |
-| Map | Pan and zoom freely; pins open a popup with name and kind |
+| Map | Pan and zoom freely; pins are photo medallions (emoji on a coloured pointer when there is no photo) and open a popup with photo, name and kind |
 | Pills (top) | GPS accuracy, speed, landmark count, follow mode, tracking mode |
 | Story card | Kind, title and the first lines of the current narration |
 | Chips (bottom) | The 12 nearest landmarks with distance; tap to hear one |
 | 🔊 Sound | Mute / unmute. Muting also stops current speech |
-| 🎙️ Auto | Toggle automatic narration on approach |
-| 🗣️ Tell me | Narrate the nearest landmark within 2.5 km |
+| ⏸️ Pause / ▶️ Resume | Turn automatic narration off (also stops the current story) without stopping tracking |
+| ⏭️ Skip | Stop the story playing now; the skipped place is not announced again on this drive |
+| 🗣️ Tell me | Narrate the nearest landmark within 2.5 km (works while paused) |
 | 🔁 Repeat | Replay the last story |
 | 🎯 Following | Keep the map centred on you, or leave it free |
 | 🛰️ Background | Tap when limited to screen-on tracking to open the permission flow |
@@ -203,6 +210,8 @@ flag live in AsyncStorage (`src/lib/settings.ts`). Everything is on-device; noth
 
 ```
 App.tsx                     single screen: map, pills, story card, chips, controls, intro
+modules/
+  audio-focus/              small local Expo module: Android audio focus for narration
 src/
   components/TourMap.tsx    Leaflet 1.9.4 map inside a WebView, bridged over postMessage
   hooks/useTourGuide.ts     permission flow, tracking mode, settings, derived nearby list
@@ -213,7 +222,8 @@ src/
     overpass.ts             OSM POI source with mirror rotation and timeouts
     interests.ts            OSM tag → kind + interest score
     wiki.ts                 article summary lookup (tag first, then search)
-    narration.ts            script building and queued text-to-speech
+    narration.ts            script building, queued text-to-speech, audio focus handover
+    audioFocus.ts           optional bridge to the local Android audio focus module
     db.ts                   SQLite cache and "already narrated" memory
     settings.ts             persisted settings and intro flag
     geo.ts                  haversine distance and distance formatting
@@ -226,8 +236,9 @@ src/
 
 Expo SDK 58 · React Native 0.88.1 · React 19 · TypeScript · `expo-location` ·
 `expo-task-manager` · `expo-speech` · `expo-sqlite` · `react-native-webview` ·
-`@react-native-async-storage/async-storage`. No map SDK key: the map is Leaflet + OSM tiles in a
-WebView, which avoids Google Maps billing entirely.
+`@react-native-async-storage/async-storage`, plus one local Kotlin Expo module for audio focus.
+No map SDK key: the map is Leaflet + OSM tiles in a WebView, which avoids Google Maps billing
+entirely.
 
 ---
 
@@ -265,6 +276,8 @@ constants for the approach logic live at the top of `src/lib/tourEngine.ts`:
   on Wikipedia results alone, which is by design but means fewer roadside features.
 - Map tiles and API calls need a network connection. Cached text works offline; the map does not.
 - Only English Wikipedia is queried.
+- Pausing other apps' music is implemented for Android only; on iOS the narration plays over
+  whatever is already running.
 
 ## Data sources and licence
 

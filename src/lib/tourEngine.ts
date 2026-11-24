@@ -3,7 +3,14 @@ import { GeoPosition, LatLng, NarrationCard, Poi } from '../types';
 import { fetchNearbyPois } from './overpass';
 import { fetchWikipediaPois } from './wikipediaGeo';
 import { fetchSummary } from './wiki';
-import { buildScript, isSpeaking, prepareVoice, setMuted, speak } from './narration';
+import {
+  buildScript,
+  isSpeaking,
+  prepareVoice,
+  setMuted,
+  speak,
+  stopSpeech,
+} from './narration';
 import {
   getCachedPoi,
   initDb,
@@ -122,7 +129,24 @@ export function updateSettings(patch: Partial<Settings>): Settings {
   settings = { ...settings, ...patch };
   void saveSettings(settings);
   if (patch.muted !== undefined) setMuted(!!patch.muted);
+  // Pausing the tour stops the story in progress too; location tracking keeps
+  // running, so resuming can pick up from wherever the car is by then.
+  if (patch.autoNarrate === false) void stopSpeech();
   return settings;
+}
+
+/**
+ * Stop the story that is playing so the driver can move on. The landmark was
+ * already marked as narrated when its story started, so skipping does not
+ * make it come back on the next fix.
+ */
+export function skipCurrent(): { ok: boolean; message: string } {
+  if (!state.nowPlaying) {
+    return { ok: false, message: 'Nothing is playing right now.' };
+  }
+  void stopSpeech();
+  setState({ nowPlaying: null });
+  return { ok: true, message: 'Skipped.' };
 }
 
 const inFlight = new Set<string>();
@@ -325,11 +349,14 @@ function publishPois(lat: number, lng: number, incoming: Poi[]): void {
   for (const poi of incoming) merged.set(poi.id, poi);
 
   // The same landmark can come from OSM and Wikipedia; keep one pin, by name.
+  // A copy with a photo of the place is worth more than a slightly more
+  // interesting one without, since the pin shows the picture.
   const unique = new Map<string, Poi>();
+  const worth = (poi: Poi) => poi.interest + (poi.image ? 15 : 0);
   for (const poi of merged.values()) {
     const key = nameKey(poi.name);
     const existing = unique.get(key);
-    if (!existing || poi.interest > existing.interest) unique.set(key, poi);
+    if (!existing || worth(poi) > worth(existing)) unique.set(key, poi);
   }
 
   const keepRadius = fetchRadius(state.position?.speed ?? null) * 1.5;

@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import { holdAudioFocus, releaseAudioFocus } from './audioFocus';
 
 let muted = false;
 let speaking = false;
@@ -73,6 +74,7 @@ export function setMuted(value: boolean): void {
     generation += 1;
     queued = 0;
     speaking = false;
+    releaseAudioFocus();
     void Speech.stop();
   }
 }
@@ -90,6 +92,7 @@ export function stopSpeech(): Promise<void> {
   generation += 1;
   queued = 0;
   speaking = false;
+  releaseAudioFocus();
   return Speech.stop().catch(() => undefined);
 }
 
@@ -99,13 +102,17 @@ export function speak(text: string, onDone?: () => void): void {
     return;
   }
 
-  if (queued >= MAX_QUEUED) {
+    if (queued >= MAX_QUEUED) {
     // Drop what is still waiting (and the current sentence) in favour of the
     // place the driver is passing right now.
     generation += 1;
     queued = 0;
     void Speech.stop();
   }
+
+  // Narration outranks the car stereo: taking transient focus pauses Spotify or
+  // YouTube Music until the story ends, and they resume when focus is released.
+  holdAudioFocus();
 
   queued += 1;
   speaking = true;
@@ -117,6 +124,7 @@ export function speak(text: string, onDone?: () => void): void {
     if (mine !== generation) return;
     queued = Math.max(0, queued - 1);
     if (queued === 0) speaking = false;
+    if (queued === 0) releaseAudioFocus();
     onDone?.();
   };
 

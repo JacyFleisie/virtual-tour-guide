@@ -18,7 +18,10 @@ interface GeoResponse {
 
 interface DescriptionResponse {
   query?: {
-    pages?: Record<string, { title?: string; description?: string }>;
+    pages?: Record<
+      string,
+      { title?: string; description?: string; thumbnail?: { source?: string } }
+    >;
   };
 }
 
@@ -136,15 +139,23 @@ export async function fetchWikipediaPois(
     `${API}?${new URLSearchParams({
       action: 'query',
       format: 'json',
-      prop: 'description',
+      // One batched call supplies both the place type and a thumbnail, which
+      // the map draws as the pin's picture.
+      prop: 'description|pageimages',
+      piprop: 'thumbnail',
+      pithumbsize: '320',
       titles,
       redirects: '1',
     }).toString()}`,
   ).catch(() => ({}) as DescriptionResponse);
 
   const byTitle = new Map<string, string>();
+  const imageByTitle = new Map<string, string>();
   for (const page of Object.values(descriptions.query?.pages ?? {})) {
-    if (page.title) byTitle.set(page.title, page.description ?? '');
+    if (!page.title) continue;
+    byTitle.set(page.title, page.description ?? '');
+    const source = page.thumbnail?.source;
+    if (source) imageByTitle.set(page.title, source);
   }
 
   const seen = new Map<string, Poi>();
@@ -166,6 +177,7 @@ export async function fetchWikipediaPois(
       // Every result is a Wikipedia article, so nudge it above raw OSM tags.
       interest: Math.min(100, classified.score + 6),
       wikipedia: `${LANG}:${hit.title}`,
+      image: imageByTitle.get(hit.title) ?? null,
     });
   }
 
