@@ -180,6 +180,18 @@ function trimExtract(extract: string, maxLength = 300): string {
   return clean.slice(0, maxLength).replace(/\s+\S*$/, '').trim();
 }
 
+/**
+ * Pull the "in <area>" half out of a source description, so a place without an
+ * article still gets a real sentence: "It's a pass in the Western Cape".
+ */
+function locationPhrase(note: string): string {
+  const match = /\bin\s+([^.;]+)/i.exec(note.replace(/\([^)]*\)/g, ' '));
+  if (!match) return '';
+  const place = match[1].trim().replace(/[, ]+$/, '');
+  if (!place || place.length > 60) return '';
+  return ` in ${place}`;
+}
+
 function spokenLead(meters: number): string {
   if (meters < 950) {
     const rounded = Math.max(50, Math.round(meters / 50) * 50);
@@ -194,6 +206,7 @@ export function buildScript(
   kind: string,
   extract: string | null,
   lead: number | null = null,
+  note: string | null = null,
 ): string {
   let base: string;
   if (lead === null) base = `Coming up on ${title}.`;
@@ -203,5 +216,6 @@ export function buildScript(
   if (extract && extract.trim()) {
     return `${base} ${trimExtract(extract)}`;
   }
-  return `${base} It's ${withArticle(kind)}.`;
+  const where = note ? locationPhrase(note) : '';
+  return `${base} It's ${withArticle(kind)}${where}.`;
 }

@@ -8,6 +8,9 @@ export interface Poi {
   interest: number;
   wikipedia?: string;
   image?: string | null;
+  source?: 'wikipedia' | 'wikivoyage' | 'wikidata' | 'osm';
+  /** One-line type/location note from the source, used when no article exists. */
+  note?: string | null;
 }
 
 export interface PoiWithDistance extends Poi {

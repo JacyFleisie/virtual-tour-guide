@@ -27,14 +27,18 @@ function buildQuery(lat: number, lng: number, radius: number): string {
   return `[out:json][timeout:25];
 (
   nwr["historic"]${around};
-  nwr["man_made"~"^(dam|bridge|water_tower|lighthouse|tower|pier|windmill|watermill|obelisk|monument)$"]${around};
+  nwr["man_made"~"^(dam|bridge|water_tower|lighthouse|tower|pier|windmill|watermill|obelisk|monument|mineshaft)$"]${around};
   nwr["waterway"~"^(dam|weir)$"]${around};
-  nwr["tourism"~"^(attraction|museum|viewpoint|artwork|zoo|theme_park|aquarium|gallery)$"]${around};
-  nwr["natural"~"^(peak|spring|cave_entrance|beach)$"]${around};
-  nwr["leisure"~"^(park|nature_reserve|garden)$"]${around};
-  nwr["amenity"~"^(place_of_worship|theatre|library|townhall|marketplace)$"]${around};
+  nwr["tourism"~"^(attraction|museum|viewpoint|artwork|zoo|theme_park|aquarium|gallery|camp_site|caravan_site)$"]${around};
+  nwr["natural"~"^(peak|hill|ridge|spring|cave_entrance|beach|bay|cape|island|peninsula|valley|gorge|cliff|wetland|wood|waterfall|dune)$"]${around};
+  nwr["leisure"~"^(park|nature_reserve|garden|stadium|golf_course|marina)$"]${around};
+  nwr["amenity"~"^(place_of_worship|theatre|library|townhall|marketplace|university|college|ferry_terminal)$"]${around};
+  nwr["place"~"^(city|town|township|village|hamlet|suburb|neighbourhood|quarter|locality|farm)$"]${around};
+  nwr["landuse"~"^(quarry|vineyard|orchard|cemetery)$"]${around};
+  nwr["aeroway"="aerodrome"]${around};
+  nwr["railway"~"^(station|halt)$"]${around};
 );
-out center tags 120;`;
+out center tags 500;`;
 }
 
 function elementToPoi(el: OverpassElement, originLat: number, originLng: number): Poi | null {
@@ -58,6 +62,7 @@ function elementToPoi(el: OverpassElement, originLat: number, originLng: number)
     lng,
     interest: classified.score,
     wikipedia: tags.wikipedia,
+    source: 'osm',
   };
 }
 
@@ -87,7 +92,10 @@ export async function fetchNearbyPois(
   lng: number,
   radius: number,
 ): Promise<Poi[]> {
-  const query = buildQuery(lat, lng, radius);
+  // A wider circle than the narration window keeps the map populated between
+  // towns, where the next named place can be several kilometres away.
+  const reach = Math.min(8000, Math.max(radius, 3000));
+  const query = buildQuery(lat, lng, reach);
   let data: OverpassResponse | null = null;
   let lastError: unknown = null;
 

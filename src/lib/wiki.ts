@@ -20,7 +20,61 @@ function tokens(value: string): string[] {
 interface SummaryPage {
   title?: string;
   extract?: string;
+  missing?: unknown;
   thumbnail?: { source?: string };
+}
+
+interface SummaryResponse {
+  query?: { pages?: Record<string, SummaryPage> };
+}
+
+function hostFor(poi: Poi, language: string): string {
+  return poi.source === 'wikivoyage'
+    ? `${language}.wikivoyage.org`
+    : `${language}.wikipedia.org`;
+}
+
+async function extractFrom(
+  host: string,
+  title: string,
+  timeoutMs = 9000,
+): Promise<WikiSummary | null> {
+  // The action API works on both Wikipedia and Wikivoyage (whose REST summary
+  // endpoint does not exist), so one code path covers every source.
+  const params = new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    titles: title,
+    prop: 'extracts|pageimages',
+    exintro: '1',
+    explaintext: '1',
+    piprop: 'thumbnail',
+    pithumbsize: '480',
+    redirects: '1',
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`https://${host}/w/api.php?${params.toString()}`, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as SummaryResponse;
+    const page = Object.values(data.query?.pages ?? {})[0];
+    if (!page || page.missing !== undefined) return null;
+    if (!page.extract || !page.extract.trim()) return null;
+    return {
+      title: page.title || title,
+      extract: page.extract,
+      image: page.thumbnail?.source ?? null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fromTag(poi: Poi): Promise<WikiSummary | null> {
@@ -30,24 +84,9 @@ async function fromTag(poi: Poi): Promise<WikiSummary | null> {
   const title = parts.length > 1 ? parts.slice(1).join(':') : parts[0];
   if (!title) return null;
 
-  try {
-    const response = await fetch(
-      `https://${language}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
-        title,
-      )}?redirect=true`,
-      { headers: { Accept: 'application/json', 'User-Agent': USER_AGENT } },
-    );
-    if (!response.ok) return null;
-    const data = (await response.json()) as SummaryPage;
-    if (!data.extract) return null;
-    return {
-      title: data.title || title,
-      extract: data.extract,
-      image: data.thumbnail?.source ?? null,
-    };
-  } catch {
-    return null;
-  }
+  // A Wikidata item may point at an article that has since been merged into
+  // another title; the search fallback in fetchSummary can still find it.
+  return extractFrom(hostFor(poi, language), title);
 }
 
 async function fromSearch(poi: Poi): Promise<WikiSummary | null> {
@@ -67,14 +106,15 @@ async function fromSearch(poi: Poi): Promise<WikiSummary | null> {
     origin: '*',
   });
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
   try {
     const response = await fetch(`https://en.wikipedia.org/w/api.php?${params.toString()}`, {
       headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      signal: controller.signal,
     });
     if (!response.ok) return null;
-    const data = (await response.json()) as {
-      query?: { pages?: Record<string, SummaryPage> };
-    };
+    const data = (await response.json()) as SummaryResponse;
     const pages = data.query?.pages;
     if (!pages) return null;
     const page = Object.values(pages)[0];
@@ -95,10 +135,12 @@ async function fromSearch(poi: Poi): Promise<WikiSummary | null> {
     };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-/** Look up a short summary for a place, using its OSM tag first, then search. */
+/** Look up a short summary for a place, using its article first, then search. */
 export async function fetchSummary(poi: Poi): Promise<WikiSummary | null> {
   return (await fromTag(poi)) ?? (await fromSearch(poi));
 }

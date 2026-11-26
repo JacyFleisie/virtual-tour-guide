@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { GeoPosition, LatLng, NarrationCard, Poi } from '../types';
 import { fetchNearbyPois } from './overpass';
 import { fetchWikipediaPois } from './wikipediaGeo';
+import { fetchWikidataPois } from './wikidata';
 import { fetchSummary } from './wiki';
 import {
   buildScript,
@@ -29,7 +30,17 @@ const MAX_FETCH_RADIUS = 3000;
 const MIN_MOVE_FETCH = 250;
 const MIN_FETCH_INTERVAL = 30000;
 const MAX_TRAIL = 400;
-const MAX_POIS = 120;
+// Pins now cover the whole area around the car, not just the next kilometre, so
+// the map has something on it even on an empty stretch of road.
+const MAX_POIS = 250;
+const KEEP_RADIUS = 20000;
+
+// Wikidata is the broadest source and the most expensive query, so it is
+// refreshed less often than the other two.
+const WIKIDATA_RADIUS_KM = 12;
+const WIKIDATA_MIN_INTERVAL = 120000;
+const WIKIDATA_MIN_MOVE = 1000;
+const WIKIDATA_MIN_GAP = 45000;
 
 // Narration should lead the landmark, not trail it. The lead is roughly the
 // length of the spoken story (~18 s), so the facts finish just as the driver
@@ -190,7 +201,7 @@ export async function narratePoi(poi: Poi, lead?: number | null): Promise<void> 
       }
     }
 
-    const text = buildScript(title, poi.kind, extract, lead ?? null);
+    const text = buildScript(title, poi.kind, extract, lead ?? null, poi.note ?? null);
     const card: NarrationCard = {
       poiId: poi.id,
       title,
@@ -359,7 +370,7 @@ function publishPois(lat: number, lng: number, incoming: Poi[]): void {
     if (!existing || worth(poi) > worth(existing)) unique.set(key, poi);
   }
 
-  const keepRadius = fetchRadius(state.position?.speed ?? null) * 1.5;
+  const keepRadius = Math.max(fetchRadius(state.position?.speed ?? null) * 1.5, KEEP_RADIUS);
   const list = Array.from(unique.values())
     .filter((poi) => haversine(lat, lng, poi.lat, poi.lng) <= keepRadius)
     .sort(
@@ -373,6 +384,17 @@ function publishPois(lat: number, lng: number, incoming: Poi[]): void {
 }
 
 let fetchSeq = 0;
+let lastWikidataFetch: { lat: number; lng: number; at: number } | null = null;
+
+/** Wikidata covers a 12 km circle, so it only needs revisiting after real movement. */
+function wikidataDue(lat: number, lng: number): boolean {
+  if (!lastWikidataFetch) return true;
+  const moved = haversine(lat, lng, lastWikidataFetch.lat, lastWikidataFetch.lng);
+  const waited = Date.now() - lastWikidataFetch.at;
+  // Never faster than one query every 45 s, and always refreshed after 2 min.
+  if (waited < WIKIDATA_MIN_GAP) return false;
+  return moved >= WIKIDATA_MIN_MOVE || waited >= WIKIDATA_MIN_INTERVAL;
+}
 
 /**
  * Wikipedia geosearch is fast, Overpass can take up to the whole deadline, so
@@ -389,14 +411,26 @@ async function runFetch(lat: number, lng: number, radius: number): Promise<void>
 
   setState({ fetching: true });
 
-  // Rejections are swallowed by allSettled: a dead source simply never publishes.
-  await Promise.allSettled([
+  const jobs: Promise<void>[] = [
     fetchWikipediaPois(lat, lng, radius).then(publish),
     Promise.race([
       fetchNearbyPois(lat, lng, radius),
       timeout(FETCH_DEADLINE),
     ]).then(publish),
-  ]);
+  ];
+
+  if (wikidataDue(lat, lng)) {
+    lastWikidataFetch = { lat, lng, at: Date.now() };
+    jobs.push(
+      Promise.race([
+        fetchWikidataPois(lat, lng, WIKIDATA_RADIUS_KM),
+        timeout(FETCH_DEADLINE + 4000),
+      ]).then(publish),
+    );
+  }
+
+  // Rejections are swallowed by allSettled: a dead source simply never publishes.
+  await Promise.allSettled(jobs);
 
   if (seq === fetchSeq) setState({ fetching: false });
 }

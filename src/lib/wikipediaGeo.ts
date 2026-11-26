@@ -1,9 +1,21 @@
 import { Poi } from '../types';
 import { haversine } from './geo';
+import { classifyPlace } from './placeText';
 import { USER_AGENT } from './userAgent';
 
-const LANG = 'en';
-const API = `https://${LANG}.wikipedia.org/w/api.php`;
+interface Source {
+  host: string;
+  lang: string;
+  source: 'wikipedia' | 'wikivoyage';
+  bonus: number;
+}
+
+// Wikivoyage articles are written for travellers, so their intro is a better
+// story than a bare encyclopaedia line, but there are far fewer of them.
+const SOURCES: Source[] = [
+  { host: 'en.wikipedia.org', lang: 'en', source: 'wikipedia', bonus: 4 },
+  { host: 'en.wikivoyage.org', lang: 'en', source: 'wikivoyage', bonus: 6 },
+];
 
 interface GeoHit {
   pageid: number;
@@ -16,81 +28,25 @@ interface GeoResponse {
   query?: { geosearch?: GeoHit[] };
 }
 
-interface DescriptionResponse {
-  query?: {
-    pages?: Record<
-      string,
-      { title?: string; description?: string; thumbnail?: { source?: string } }
-    >;
-  };
+interface DetailPage {
+  title?: string;
+  description?: string;
+  thumbnail?: { source?: string };
 }
 
-type Rule = { test: RegExp; kind: string; category: string; score: number };
-
-// Checked in order, so "Dam Square" is a square rather than a dam.
-const RULES: Rule[] = [
-  { test: /\b(square|plein|platz)\b/i, kind: 'square', category: 'tourism', score: 74 },
-  { test: /\b(canal|gracht)\b/i, kind: 'canal', category: 'waterway', score: 66 },
-  { test: /\bpalace\b/i, kind: 'palace', category: 'historic', score: 90 },
-  { test: /\b(castle|fortress|citadel)\b/i, kind: 'castle', category: 'historic', score: 92 },
-  { test: /\b(cathedral|basilica)\b/i, kind: 'cathedral', category: 'amenity', score: 82 },
-  {
-    test: /\b(church|chapel|synagogue|mosque|temple|minster)\b/i,
-    kind: 'place of worship',
-    category: 'amenity',
-    score: 70,
-  },
-  { test: /\bmuseum\b/i, kind: 'museum', category: 'tourism', score: 84 },
-  { test: /\bgallery\b/i, kind: 'gallery', category: 'tourism', score: 70 },
-  { test: /\blighthouse\b/i, kind: 'lighthouse', category: 'man_made', score: 91 },
-  { test: /\b(windmill|watermill)\b/i, kind: 'windmill', category: 'man_made', score: 77 },
-  {
-    test: /\b(monument|memorial|statue|obelisk)\b/i,
-    kind: 'monument',
-    category: 'historic',
-    score: 88,
-  },
-  { test: /\bbridge\b/i, kind: 'bridge', category: 'man_made', score: 84 },
-  { test: /\btower\b/i, kind: 'tower', category: 'man_made', score: 76 },
-  { test: /\bdams?\b/i, kind: 'dam', category: 'waterway', score: 94 },
-  { test: /\b(park|garden|botanical)\b/i, kind: 'park', category: 'leisure', score: 62 },
-  {
-    test: /\b(theatre|theater|opera|concert hall|concertgebouw)\b/i,
-    kind: 'theatre',
-    category: 'amenity',
-    score: 74,
-  },
-  { test: /\blibrary\b/i, kind: 'library', category: 'amenity', score: 58 },
-  { test: /\b(market|marketplace)\b/i, kind: 'marketplace', category: 'amenity', score: 58 },
-  { test: /\b(station|terminal)\b/i, kind: 'station', category: 'transport', score: 60 },
-  { test: /\b(university|academy|college)\b/i, kind: 'university', category: 'education', score: 58 },
-  { test: /\b(stadium|arena)\b/i, kind: 'stadium', category: 'leisure', score: 62 },
-  { test: /\b(zoo|aquarium)\b/i, kind: 'zoo', category: 'tourism', score: 80 },
-  { test: /\b(exchange|beurs)\b/i, kind: 'historic building', category: 'historic', score: 76 },
-  { test: /\b(house|huis)\b/i, kind: 'historic house', category: 'historic', score: 64 },
-  { test: /\b(hotel)\b/i, kind: 'hotel', category: 'tourism', score: 50 },
-  { test: /\b(building|gebouw|hall|halle)\b/i, kind: 'building', category: 'historic', score: 56 },
-];
-
-// Articles about events and people sit on the map but are not places to tour.
-const NOT_A_PLACE =
-  /^(\d{4}\b)|\b(timeline of|list of|inauguration of|shooting|assassination|murder|battle of|election|referendum|riot|demonstration|protest|crash|derailment|fire|epidemic|pandemic)\b/i;
-
-function classifyText(text: string): { kind: string; category: string; score: number } | null {
-  if (NOT_A_PLACE.test(text)) return null;
-  for (const rule of RULES) {
-    if (rule.test.test(text)) {
-      return { kind: rule.kind, category: rule.category, score: rule.score };
-    }
-  }
-  return null;
+interface DetailResponse {
+  query?: { pages?: Record<string, DetailPage> };
 }
 
-function normalize(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\s*\([^)]*\)\s*$/, '')
-    .trim();
+// The geosearch API caps a circle at 10 km, so the reach is widened to that in
+// the countryside and kept modest in a dense city.
+const MAX_REACH = 10000;
+const MIN_REACH = 6000;
+const MAX_HITS = 90;
+const DETAIL_BATCH = 20;
+
+function reachFor(radius: number): number {
+  return Math.min(MAX_REACH, Math.max(MIN_REACH, Math.round(radius * 2)));
 }
 
 async function getJson<T>(url: string, timeoutMs = 9000): Promise<T> {
@@ -101,87 +57,144 @@ async function getJson<T>(url: string, timeoutMs = 9000): Promise<T> {
       headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`Wikipedia responded ${response.status}`);
+    if (!response.ok) throw new Error(`MediaWiki responded ${response.status}`);
     return (await response.json()) as T;
   } finally {
     clearTimeout(timer);
   }
 }
 
+async function geosearch(
+  source: Source,
+  lat: number,
+  lng: number,
+  reach: number,
+): Promise<GeoHit[]> {
+  const params = new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    list: 'geosearch',
+    gscoord: `${lat}|${lng}`,
+    gsradius: String(reach),
+    gslimit: '200',
+    gsnamespace: '0',
+  });
+  const data = await getJson<GeoResponse>(`https://${source.host}/w/api.php?${params.toString()}`);
+  return (data.query?.geosearch ?? []).filter(
+    (hit) => typeof hit.lat === 'number' && typeof hit.lon === 'number',
+  );
+}
+
+/** One batched call adds the short description that tells us what kind of place it is. */
+async function details(source: Source, titles: string[]): Promise<Map<string, DetailPage>> {
+  const out = new Map<string, DetailPage>();
+  const batches: string[][] = [];
+  for (let i = 0; i < titles.length; i += DETAIL_BATCH) {
+    batches.push(titles.slice(i, i + DETAIL_BATCH));
+  }
+
+  await Promise.all(
+    batches.map(async (batch) => {
+      const params = new URLSearchParams({
+        action: 'query',
+        format: 'json',
+        prop: 'description|pageimages',
+        piprop: 'thumbnail',
+        pithumbsize: '320',
+        titles: batch.join('|'),
+        redirects: '1',
+      });
+      try {
+        const data = await getJson<DetailResponse>(
+          `https://${source.host}/w/api.php?${params.toString()}`,
+          8000,
+        );
+        for (const page of Object.values(data.query?.pages ?? {})) {
+          if (page.title) out.set(page.title, page);
+        }
+      } catch {
+        // descriptions are optional; titles alone still give pins
+      }
+    }),
+  );
+
+  return out;
+}
+
+async function fromSource(
+  source: Source,
+  lat: number,
+  lng: number,
+  reach: number,
+): Promise<Poi[]> {
+  const hits = await geosearch(source, lat, lng, reach);
+  if (hits.length === 0) return [];
+
+  // Dense cities return hundreds of hits; the nearest are the ones that matter.
+  const nearest = [...hits]
+    .sort((a, b) => haversine(lat, lng, a.lat, a.lon) - haversine(lat, lng, b.lat, b.lon))
+    .slice(0, MAX_HITS);
+
+  const detail = await details(
+    source,
+    nearest.map((hit) => hit.title),
+  );
+
+  const seen = new Map<string, Poi>();
+  for (const hit of nearest) {
+    const page = detail.get(hit.title);
+    const description = page?.description ?? '';
+    const name = hit.title.replace(/\s*\([^)]*\)\s*$/, '');
+    const classified = classifyPlace(description, name);
+    if (!classified) continue;
+
+    const key = name.toLowerCase().trim();
+    if (seen.has(key)) continue;
+
+    seen.set(key, {
+      id: `${source.source}/${hit.pageid}`,
+      name,
+      kind: classified.kind,
+      category: classified.category,
+      lat: hit.lat,
+      lng: hit.lon,
+      interest: Math.min(100, classified.score + source.bonus),
+      wikipedia: `${source.lang}:${hit.title}`,
+      image: page?.thumbnail?.source ?? null,
+      source: source.source,
+      note: description || null,
+    });
+  }
+
+  return Array.from(seen.values());
+}
+
 /**
- * Free, keyless POI source built on Wikipedia's geosearch. Used alongside
- * OpenStreetMap so the tour still finds landmarks when Overpass is blocked,
- * slow or rate limited. One batched request adds short descriptions, which
- * give us a reliable place type (church, palace, museum…).
+ * Free, keyless POI source built on Wikipedia and Wikivoyage geosearch. Used
+ * alongside OpenStreetMap and Wikidata so the tour still finds places when
+ * Overpass is blocked, slow or rate limited.
  */
 export async function fetchWikipediaPois(
   lat: number,
   lng: number,
   radius: number,
 ): Promise<Poi[]> {
-  const geoParams = new URLSearchParams({
-    action: 'query',
-    format: 'json',
-    list: 'geosearch',
-    gscoord: `${lat}|${lng}`,
-    gsradius: String(Math.round(Math.min(radius * 1.6, 10000))),
-    gslimit: '50',
-  });
-
-  const geo = await getJson<GeoResponse>(`${API}?${geoParams.toString()}`);
-  const hits = (geo.query?.geosearch ?? []).filter(
-    (hit) => typeof hit.lat === 'number' && typeof hit.lon === 'number',
+  const reach = reachFor(radius);
+  const results = await Promise.allSettled(
+    SOURCES.map((source) => fromSource(source, lat, lng, reach)),
   );
-  if (hits.length === 0) return [];
 
-  const titles = hits.map((hit) => hit.title).join('|');
-  const descriptions = await getJson<DescriptionResponse>(
-    `${API}?${new URLSearchParams({
-      action: 'query',
-      format: 'json',
-      // One batched call supplies both the place type and a thumbnail, which
-      // the map draws as the pin's picture.
-      prop: 'description|pageimages',
-      piprop: 'thumbnail',
-      pithumbsize: '320',
-      titles,
-      redirects: '1',
-    }).toString()}`,
-  ).catch(() => ({}) as DescriptionResponse);
-
-  const byTitle = new Map<string, string>();
-  const imageByTitle = new Map<string, string>();
-  for (const page of Object.values(descriptions.query?.pages ?? {})) {
-    if (!page.title) continue;
-    byTitle.set(page.title, page.description ?? '');
-    const source = page.thumbnail?.source;
-    if (source) imageByTitle.set(page.title, source);
+  const merged = new Map<string, Poi>();
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    for (const poi of result.value) {
+      const key = poi.name.toLowerCase().trim();
+      const existing = merged.get(key);
+      if (!existing || poi.interest > existing.interest) merged.set(key, poi);
+    }
   }
 
-  const seen = new Map<string, Poi>();
-  for (const hit of hits) {
-    const description = byTitle.get(hit.title) ?? '';
-    const classified = classifyText(`${hit.title} ${description}`);
-    if (!classified) continue;
-
-    const key = normalize(hit.title);
-    if (seen.has(key)) continue;
-
-    seen.set(key, {
-      id: `wiki/${hit.pageid}`,
-      name: hit.title.replace(/\s*\([^)]*\)\s*$/, ''),
-      kind: classified.kind,
-      category: classified.category,
-      lat: hit.lat,
-      lng: hit.lon,
-      // Every result is a Wikipedia article, so nudge it above raw OSM tags.
-      interest: Math.min(100, classified.score + 6),
-      wikipedia: `${LANG}:${hit.title}`,
-      image: imageByTitle.get(hit.title) ?? null,
-    });
-  }
-
-  return Array.from(seen.values()).sort(
+  return Array.from(merged.values()).sort(
     (a, b) =>
       b.interest - a.interest ||
       haversine(lat, lng, a.lat, a.lng) - haversine(lat, lng, b.lat, b.lng),

@@ -1,8 +1,9 @@
 # Virtual Tour Guide
 
-A hands-free Android tour guide for the road. Drive past a dam, a bridge, a monument or a
-cathedral and the app tells you what it is, out loud, before you reach it. No account, no API
-keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia data.
+A hands-free Android tour guide for the road. Drive past a dam, a bridge, a monument, a cathedral,
+a town, a farm, a mountain pass or a nature reserve and the app tells you what it is, out loud,
+before you reach it. No account, no API keys, no paid services — it runs entirely on free
+OpenStreetMap, Wikipedia, Wikivoyage and Wikidata data.
 
 [![Download the latest APK](https://img.shields.io/badge/⬇_Download-Android_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/JacyFleisie/virtual-tour-guide/releases/latest/download/virtual-tour-guide.apk)
 
@@ -13,8 +14,8 @@ keys, no paid services — it runs entirely on free OpenStreetMap and Wikipedia 
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)
 ![Expo SDK](https://img.shields.io/badge/Expo_SDK-58-000020?logo=expo&logoColor=white)
 ![React Native](https://img.shields.io/badge/React_Native-0.88-61DAFB?logo=react&logoColor=black)
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
-![Data](https://img.shields.io/badge/data-OSM_%2B_Wikipedia-0aa2c0)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Data](https://img.shields.io/badge/data-OSM_%2B_Wikimedia-0aa2c0)
 
 ---
 
@@ -81,6 +82,9 @@ tiles, landmark data and Wikipedia summaries; everything already heard is cached
   where you heard it, so a round trip does not loop the same facts.
 - **Offline-tolerant for text.** Summaries and images already fetched are cached in SQLite and
   spoken again without a network round trip.
+- **Something to say almost everywhere.** Landmarks come from four free sources, so the tour keeps
+  talking on an empty Karoo road, through a township, past a farm or over a mountain pass — not
+  just in the middle of a city.
 - **Filter the noise.** Minimum interest score, sound and auto-narration are all toggleable.
 
 ---
@@ -90,7 +94,7 @@ tiles, landmark data and Wikipedia summaries; everything already heard is cached
 The whole app is one pipeline. Every piece is in `src/`.
 
 ```
-GPS fix ──► tour engine ──► POI fetch (Wikipedia + Overpass) ──► filter & rank
+GPS fix ──► tour engine ──► POI fetch (Wikipedia + Wikidata + Overpass) ──► filter & rank
                 │                                                   │
                 └────────── cue window + heading ──► narration ◄─────┘
 ```
@@ -119,17 +123,26 @@ side of the road a place is on.
 
 ### 2. Finding landmarks
 
-Two free, keyless sources are queried in parallel around your position:
+Four free, keyless sources are queried in parallel around your position:
 
 | Source | File | What it contributes |
 | --- | --- | --- |
-| Wikipedia geosearch | `src/lib/wikipediaGeo.ts` | Articles within radius, classified into a place type from the title + description |
-| OpenStreetMap / Overpass | `src/lib/overpass.ts` | Tagged features: `historic`, `man_made`, `waterway`, `tourism`, `natural`, `leisure`, `amenity` |
+| Wikipedia geosearch | `src/lib/wikipediaGeo.ts` | Articles within 10 km, typed from the article's short description |
+| Wikivoyage geosearch | `src/lib/wikipediaGeo.ts` | Travel-guide articles, whose intro makes the best story |
+| Wikidata (SPARQL) | `src/lib/wikidata.ts` | Every mapped town, suburb, farm, mountain, pass, dam, mine, school and reserve with coordinates |
+| OpenStreetMap / Overpass | `src/lib/overpass.ts` | Tagged features: `historic`, `man_made`, `waterway`, `tourism`, `natural`, `leisure`, `amenity`, `place`, `landuse`, `aeroway`, `railway` |
 
-Wikipedia publishes first (it is fast) and OSM pins merge in when the mirror answers, so the map
-fills immediately even when Overpass is slow. Overpass requests race a 12 s deadline and rotate
-through three public mirrors; a dead source simply never publishes. Duplicate landmarks that
-arrive from both sources are collapsed by normalised name, keeping the higher-interest copy.
+Wikipedia and Wikivoyage publish first (they are fast), Wikidata follows, and OSM pins merge in
+when the mirror answers, so the map fills immediately even when Overpass is slow. Overpass requests
+race a 12 s deadline and rotate through three public mirrors; a dead source simply never
+publishes. Duplicate landmarks that arrive from several sources are collapsed by normalised name,
+keeping the higher-interest copy (a photo counts for more).
+
+Wikidata is what makes coverage hold up away from the cities. Its geosearch query reaches 12 km
+and, on a genuinely empty stretch, is widened once to 30 km before the tour is left with silence —
+that is how a Karoo road with nothing on Wikipedia still finds the next dam, pass and town. The
+query is refreshed at most every 45 s and always after 2 minutes of movement, to stay a polite
+client of a free public service.
 
 Every outbound request sends a descriptive `User-Agent` (`src/lib/userAgent.ts`) — Wikimedia and
 Overpass return `403` to React Native's default `okhttp` agent.
@@ -137,10 +150,20 @@ Overpass return `403` to React Native's default `okhttp` agent.
 ### 3. Scoring what is worth narrating
 
 `src/lib/interests.ts` maps OSM tags to a kind and an interest score (0–100); a place tagged with
-`wikipedia` or `wikidata` gets a +10 bump because there is a story to tell. The Wikipedia source
-uses an equivalent rule table in `wikipediaGeo.ts`, plus a blocklist so articles about events,
-battles, shootings or "list of…" pages are not treated as places. Examples: dam 94, castle 92,
-lighthouse 91, monument 88, museum 84, bridge 84, cathedral 82, park 62, library 58.
+`wikipedia` or `wikidata` gets a +10 bump because there is a story to tell.
+
+The Wikipedia, Wikivoyage and Wikidata sources all share one classifier, `src/lib/placeText.ts`.
+It reads the type-first description every Wikimedia source provides — "town in the Western Cape",
+"palaeontological site in South Africa", "mountain range in Limpopo" — so a settlement, a farm, a
+pass or a fossil site is recognised the same way everywhere. A blocklist keeps events, battles,
+shootings, species, people and "list of…" pages out. Names carry their own clues too: a "poort" is
+a pass, a "kloof" a gorge, a "kop" a hill, a "baai" a bay, and an empty description still gets a
+pin that can be tapped.
+
+Examples: dam 94, castle 92, lighthouse 91, monument 88, city 88, museum 86, town 84, bridge 84,
+cathedral 82, nature reserve 80, mountain 80, island 80, township 82, village 80, pass 74, mine 74,
+farm 68, suburb 66, park 62, school 56. Only places scoring at least 70 auto-narrate, so a drive
+is never flooded with suburbs and schools, but they are all on the map and one tap away.
 
 ### 4. Narration that leads instead of trails
 
@@ -177,7 +200,8 @@ holds one utterance: a new story replaces an old one rather than stacking behind
 | 130 km/h | 950 m | 285 m | 1140 m |
 
 POIs are re-fetched every 250 m of travel or 30 s, whichever comes first, with a 1 km minimum
-radius and a list capped at 120 places.
+radius. Pins are kept within 20 km and the list is capped at 250 places, so the map shows what is
+coming for the next town or two rather than only the next kilometre.
 
 ### 5. Caching and memory
 
@@ -218,7 +242,9 @@ src/
   lib/
     tourEngine.ts           shared state, cue logic, fetch scheduling, narration decisions
     backgroundLocation.ts   background task + foreground watcher + permission helpers
-    wikipediaGeo.ts         Wikipedia geosearch POI source and place classifier
+    wikipediaGeo.ts         Wikipedia + Wikivoyage geosearch POI source
+    wikidata.ts             Wikidata geosearch POI source (towns, farms, peaks, everything mapped)
+    placeText.ts            shared classifier: description + name → kind + interest score
     overpass.ts             OSM POI source with mirror rotation and timeouts
     interests.ts            OSM tag → kind + interest score
     wiki.ts                 article summary lookup (tag first, then search)
@@ -272,8 +298,9 @@ constants for the approach logic live at the top of `src/lib/tourEngine.ts`:
 - Background narration, battery use, heading lag in tight turns and TTS behaviour on a real drive
   have not been verified on physical hardware; the numbers above come from the code, not a
   measured road test.
-- Overpass mirrors are public and rate-limited; when all three refuse the connection the app runs
-  on Wikipedia results alone, which is by design but means fewer roadside features.
+- Overpass mirrors are public and rate-limited; when all three refuse the connection the app still
+  runs on Wikipedia, Wikivoyage and Wikidata, which is by design but means fewer OSM-tagged
+  features such as small bridges and artworks.
 - Map tiles and API calls need a network connection. Cached text works offline; the map does not.
 - Only English Wikipedia is queried.
 - Pausing other apps' music is implemented for Android only; on iOS the narration plays over
