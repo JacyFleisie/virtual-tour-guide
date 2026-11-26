@@ -148,6 +148,19 @@ function withArticle(kind: string): string {
   return /^[aeiou]/i.test(kind) ? `an ${kind}` : `a ${kind}`;
 }
 
+// Kinds that say nothing a driver cannot see: better to name the place and stop
+// than to read out "It's a place in Gauteng".
+const GENERIC_KINDS = new Set([
+  'place',
+  'settlement',
+  'locality',
+  'area',
+  'site',
+  'structure',
+  'building',
+  'location',
+]);
+
 /** Strip the bits a speech engine reads badly: citations, asides, symbols. */
 function cleanForSpeech(extract: string): string {
   return extract
@@ -216,6 +229,9 @@ export function buildScript(
   if (extract && extract.trim()) {
     return `${base} ${trimExtract(extract)}`;
   }
+  // Nothing specific to add: a generic type plus a province is noise, so the
+  // place is still announced by name but nothing more is claimed about it.
+  if (GENERIC_KINDS.has((kind ?? '').trim().toLowerCase())) return base;
   const where = note ? locationPhrase(note) : '';
   return `${base} It's ${withArticle(kind)}${where}.`;
 }

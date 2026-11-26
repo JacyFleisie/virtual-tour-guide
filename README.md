@@ -14,7 +14,7 @@ OpenStreetMap, Wikipedia, Wikivoyage and Wikidata data.
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)
 ![Expo SDK](https://img.shields.io/badge/Expo_SDK-58-000020?logo=expo&logoColor=white)
 ![React Native](https://img.shields.io/badge/React_Native-0.88-61DAFB?logo=react&logoColor=black)
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.1-blue)
 ![Data](https://img.shields.io/badge/data-OSM_%2B_Wikimedia-0aa2c0)
 
 ---
@@ -160,6 +160,13 @@ shootings, species, people and "list of…" pages out. Names carry their own clu
 a pass, a "kloof" a gorge, a "kop" a hill, a "baai" a bay, and an empty description still gets a
 pin that can be tapped.
 
+No source is allowed to leave a place as an anonymous "place". When no rule matches, the
+description's own leading noun becomes the kind — "clinic in Gauteng" is a clinic, "place in
+Gauteng" (Wikidata's wording for a populated place) is a settlement, "home in Johannesburg" is a
+historic house — so a pin reads "clinic · 50 m" instead of "place · 50 m". If nothing specific
+survives, the pin is still worth tapping but the narrator only names the place: it never claims
+"It's a place in Gauteng".
+
 Examples: dam 94, castle 92, lighthouse 91, monument 88, city 88, museum 86, town 84, bridge 84,
 cathedral 82, nature reserve 80, mountain 80, island 80, township 82, village 80, pass 74, mine 74,
 farm 68, suburb 66, park 62, school 56. Only places scoring at least 70 auto-narrate, so a drive
@@ -184,7 +191,9 @@ nearest qualifying landmark inside the cue window:
   cut off mid-sentence; the next story begins on the first fix after the previous one finishes
   (2.5 s backstop).
 - **Phrasing adapts**: `Dordrecht Museum, 700 metres ahead.` on approach, `You're passing X.`
-  within 60 m, and plain `Coming up on X.` for a place you tapped yourself.
+  within 60 m, and plain `Coming up on X.` for a place you tapped yourself or whose type is only
+  generic ("settlement", "locality", "place") — a known type is read out as
+  `It's a clinic in Gauteng, South Africa.`
 
 `src/lib/narration.ts` picks the clearest installed English voice once per run (enhanced or Google
 network voices score highest), speaks at rate 0.92, pitch 1.0 and full volume, strips citations

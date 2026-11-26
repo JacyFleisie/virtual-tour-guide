@@ -122,8 +122,8 @@ const PLACE: Record<string, KindScore> = {
   suburb: { kind: 'suburb', score: 66 },
   neighbourhood: { kind: 'suburb', score: 64 },
   quarter: { kind: 'suburb', score: 62 },
-  locality: { kind: 'place', score: 62 },
-  isolated_dwelling: { kind: 'place', score: 56 },
+  locality: { kind: 'locality', score: 62 },
+  isolated_dwelling: { kind: 'homestead', score: 56 },
   farm: { kind: 'farm', score: 68 },
 };
 
