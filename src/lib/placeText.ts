@@ -31,6 +31,7 @@ const EVENTS = new RegExp(
     '\\b(timeline of|list of|history of|inauguration of)\\b',
     '\\b(battle|siege|massacre|shooting|stabbing|slashing|murder|assassination|bombing|riot|protest|election|referendum|earthquake|flood|wildfire|crash|derailment|disaster|epidemic|pandemic|outbreak)\\b',
     '\\b(album|film|novel|song|band|video game|television series)\\b',
+    '\\b(tournament|championship|competition|grand prix|cup final|world cup|league season|season of|edition of)\\b',
     '\\b(company|airline|newspaper|magazine|political party|football club|rugby union team|cricket team|record label)\\b',
   ].join('|'),
   'i',
